@@ -1,0 +1,69 @@
+# Argo CD Application Manifest
+# This file tells Argo CD how to deploy your application
+#
+# INSTRUCTIONS:
+# 1. Replace YOUR_GITHUB_USERNAME and YOUR_REPO_NAME with your actual values
+# 2. Apply this file: kubectl apply -f argocd-application.yaml
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fastapi-service
+  namespace: argocd
+  # Finalizer ensures app cleanup when deleted
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Project the application belongs to (default is fine for most cases)
+  project: default
+  
+  # Source repository configuration
+  source:
+    # ⚠️ REPLACE with your GitHub repository URL
+    repoURL: https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
+    
+    # Branch to track (HEAD = latest commit on default branch)
+    targetRevision: HEAD
+    
+    # Path to Helm chart within the repository
+    path: helm/fastapi-service
+    
+    # Helm-specific configuration
+    helm:
+      # Values files to use (relative to path)
+      valueFiles:
+        - values.yaml
+  
+  # Destination cluster and namespace
+  destination:
+    # Deploy to the same cluster where Argo CD is running
+    server: https://kubernetes.default.svc
+    # Namespace to deploy the application
+    namespace: default
+  
+  # Sync policy configuration
+  syncPolicy:
+    # Enable automatic sync
+    automated:
+      # Automatically delete resources that are removed from Git
+      prune: true
+      # Automatically correct any configuration drift
+      selfHeal: true
+      # Allow sync even when there are no changes (disabled to reduce noise)
+      allowEmpty: false
+    
+    # Additional sync options
+    syncOptions:
+      # Create the namespace if it doesn't exist
+      - CreateNamespace=true
+      # Use server-side apply (better for large resources)
+      - ServerSideApply=true
+    
+    # Retry configuration for failed syncs
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+

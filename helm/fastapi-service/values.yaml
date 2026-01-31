@@ -1,0 +1,98 @@
+# Default values for fastapi-service
+# This is a YAML-formatted file.
+
+# Number of replicas
+replicaCount: 2
+
+# Image configuration
+image:
+  repository: ""  # Will be set during deployment: <acr-name>.azurecr.io/fastapi-service
+  pullPolicy: Always
+  tag: "latest"
+
+# Image pull secrets (for ACR authentication)
+imagePullSecrets: []
+
+# Service account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext: {}
+
+# Container security context
+securityContext: {}
+
+# Service configuration
+service:
+  type: LoadBalancer  # Creates external IP
+  port: 80
+  targetPort: 8000
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Liveness probe
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Readiness probe
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Environment variables
+env:
+  - name: PYTHONUNBUFFERED
+    value: "1"
+
+# Ingress configuration (optional - for domain-based routing)
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: fastapi.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
