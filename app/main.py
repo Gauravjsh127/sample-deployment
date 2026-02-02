@@ -37,5 +37,5 @@ async def root():
     """
     Root endpoint with welcome message.
     """
-    return {"message": "Welcome to FastAPI Service  v222", "docs": "/docs"}
+    return {"message": "Welcome to FastAPI Service  v333", "docs": "/docs"}
 

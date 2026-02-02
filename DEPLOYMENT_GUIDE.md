@@ -790,7 +790,7 @@ docker push acrsandboxwus2.azurecr.io/test_app:v1.0.1
 
 # 5. Monitor deployment
 
-joshigaurav@BER-6VQHK220Q test_api_server % az aks command invoke \
+az aks command invoke \
   --resource-group rg-sandbox-horizon \
   --name aks-sandbox-wus2 \
   --command "kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f"
