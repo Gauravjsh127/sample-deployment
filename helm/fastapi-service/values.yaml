@@ -63,8 +63,9 @@ readinessProbe:
   timeoutSeconds: 5
   failureThreshold: 3
 
-# Node selector
-nodeSelector: {}
+# Node selector - ensure pods run on AMD64 nodes only
+nodeSelector:
+  kubernetes.io/arch: amd64
 
 # Tolerations
 tolerations: []

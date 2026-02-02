@@ -1,0 +1,26 @@
+# ImageUpdater Custom Resource for ArgoCD Image Updater v1.0+
+# This CR configures automatic image updates from ACR to AKS
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: test-app-updater
+  namespace: argocd
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build  # Options: newest-build, semver, digest, name
+    pullSecret: pullsecret:argocd/acr-creds
+    platforms:
+      - linux/amd64
+  writeBackConfig:
+    method: argocd  # Updates ArgoCD app directly, no git commits needed
+  applicationRefs:
+    - namePattern: test-app  # Matches ArgoCD Application named "test-app"
+      images:
+        - alias: fastapi
+          imageName: acrsandboxwus2.azurecr.io/test_app
+          manifestTargets:
+            helm:
+              name: image.repository
+              tag: image.tag
+
