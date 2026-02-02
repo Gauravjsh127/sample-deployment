@@ -31,7 +31,8 @@ If Argo CD and Image Updater are already configured, use this to deploy:
 az acr login --name acrsandboxwus2
 
 # 2. Build image (from project directory)
-docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+# ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
 
 # 3. Push to ACR
 docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
@@ -101,7 +102,6 @@ docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
 9. [Complete Image Push Workflow](#-complete-image-push-workflow-copy--paste)
 10. [Deploy a New Version](#-deploy-a-new-version)
 11. [Quick Reference Commands](#-quick-reference-commands)
-12. [Troubleshooting](#-troubleshooting)
 
 ---
 
@@ -115,23 +115,12 @@ docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
 
 ---
 
-## Step 1: Install Required Tools
+## Step 1: Install Required Tools (macOS)
 
 ### 1.1 Install Azure CLI
 
-**On macOS:**
 ```bash
 brew install azure-cli
-```
-
-**On Windows (PowerShell as Admin):**
-```powershell
-winget install Microsoft.AzureCLI
-```
-
-**On Linux (Ubuntu/Debian):**
-```bash
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 ```
 
 **Verify:**
@@ -141,20 +130,8 @@ az --version
 
 ### 1.2 Install kubectl
 
-**On macOS:**
 ```bash
 brew install kubectl
-```
-
-**On Windows:**
-```powershell
-winget install Kubernetes.kubectl
-```
-
-**On Linux:**
-```bash
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 ```
 
 **Verify:**
@@ -164,19 +141,8 @@ kubectl version --client
 
 ### 1.3 Install Helm
 
-**On macOS:**
 ```bash
 brew install helm
-```
-
-**On Windows:**
-```powershell
-winget install Helm.Helm
-```
-
-**On Linux:**
-```bash
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
 **Verify:**
@@ -186,7 +152,11 @@ helm version
 
 ### 1.4 Install Docker
 
-**Download from:** https://docs.docker.com/get-docker/
+```bash
+brew install --cask docker
+```
+
+Then open Docker Desktop from Applications.
 
 ---
 
@@ -306,16 +276,8 @@ echo
 
 ### 3.5 Install Argo CD CLI (Optional)
 
-**On macOS:**
 ```bash
 brew install argocd
-```
-
-**On Linux:**
-```bash
-curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
-rm argocd-linux-amd64
 ```
 
 **Login with CLI:**
@@ -604,27 +566,39 @@ Navigate to the project directory (where Dockerfile is located):
 ```bash
 # Navigate to project root
 cd /path/to/test_api_server
+```
 
-# Build the image with version tag
-docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+> ⚠️ **IMPORTANT: Apple Silicon (M1/M2/M3) Users**
+>
+> AKS runs on AMD64 (x86_64) architecture. You **MUST** specify the target platform or you'll get `exec format error` when pods try to start.
+
+```bash
+# Build for AMD64 architecture (required for AKS)
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
 ```
 
 **Alternative tagging options:**
 
 ```bash
 # Use timestamp for unique tags
-docker build -t acrsandboxwus2.azurecr.io/test_app:$(date +%Y%m%d-%H%M%S) .
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$(date +%Y%m%d-%H%M%S) .
 
 # Use git commit SHA
-docker build -t acrsandboxwus2.azurecr.io/test_app:$(git rev-parse --short HEAD) .
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$(git rev-parse --short HEAD) .
 
 # Build with latest tag
-docker build -t acrsandboxwus2.azurecr.io/test_app:latest .
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:latest .
 ```
 
 **Verify the image was built:**
 ```bash
 docker images | grep test_app
+```
+
+**Verify image architecture:**
+```bash
+docker inspect acrsandboxwus2.azurecr.io/test_app:v1.0.0 | grep Architecture
+# Should output: "Architecture": "amd64"
 ```
 
 ### 6.5 Push Image to ACR
@@ -677,19 +651,88 @@ level=info msg="Successfully updated image 'fastapi' to 'acrsandboxwus2.azurecr.
 
 ### 6.8 Verify Deployment
 
+**Option A: Direct kubectl access:**
 ```bash
-# Check what image is running (deployment name is RELEASE-NAME-CHART-NAME)
-kubectl get deployment test-app-fastapi-service -o jsonpath='{.spec.template.spec.containers[0].image}'
-echo
+# Step 1: Check if ArgoCD application exists and is synced
+kubectl get application test-app -n argocd
 
-# Check pod status
+# Step 2: Check ArgoCD app sync status
+kubectl get application test-app -n argocd -o jsonpath='{.status.sync.status}'
+
+# Step 3: List all deployments to find the correct name
+kubectl get deployments
+
+# Step 4: Check what image is running (deployment name is RELEASE-NAME-CHART-NAME)
+kubectl get deployment test-app-fastapi-service -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+# Step 5: Check pod status
 kubectl get pods -l app.kubernetes.io/name=fastapi-service
 
-# Get app external IP
+# Step 6: Get app external IP
 kubectl get svc
 
-# Test the app
+# Step 7: Test the app (replace EXTERNAL_IP with actual IP)
 curl http://EXTERNAL_IP/health
+```
+
+**Option B: Via AKS command invoke (for private clusters):**
+
+> **Important:** Run each command separately. Do NOT combine commands with comments on the same line.
+
+```bash
+# Step 1: Check if ArgoCD application exists
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get application test-app -n argocd"
+```
+
+```bash
+# Step 2: Check ArgoCD app sync status
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get application test-app -n argocd -o jsonpath='{.status.sync.status}'"
+```
+
+```bash
+# Step 3: List all deployments in default namespace
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get deployments"
+```
+
+```bash
+# Step 4: Check what image is running
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get deployment test-app-fastapi-service -o jsonpath='{.spec.template.spec.containers[0].image}'"
+```
+
+```bash
+# Step 5: Check pod status
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get pods -l app.kubernetes.io/name=fastapi-service"
+```
+
+```bash
+# Step 6: Get services and external IP
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get svc"
+```
+
+```bash
+# Step 7: Test the app from inside the cluster
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl run curl-test --image=curlimages/curl --rm -it --restart=Never -- curl -s http://test-app-fastapi-service/health"
 ```
 
 ---
@@ -713,7 +756,8 @@ az login
 az acr login --name acrsandboxwus2
 
 # Step 4: Build the Docker image
-docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+# ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
 
 # Step 5: Push to ACR
 docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
@@ -733,8 +777,10 @@ Whenever you want to deploy changes:
 
 ```bash
 # 1. Make your code changes
+
 # 2. Build with new tag
-docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.1 .
+# ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.1 .
 
 # 3. Push to ACR
 az acr login --name acrsandboxwus2
@@ -743,7 +789,12 @@ docker push acrsandboxwus2.azurecr.io/test_app:v1.0.1
 # 4. Image Updater automatically detects and deploys (within 2 minutes)
 
 # 5. Monitor deployment
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
+
+joshigaurav@BER-6VQHK220Q test_api_server % az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f"
+
 ```
 
 ---
@@ -770,8 +821,8 @@ annotations:
 
 ### Build & Push
 ```bash
-# Build image
-docker build -t acrsandboxwus2.azurecr.io/test_app:TAG .
+# Build image (use --platform linux/amd64 on Apple Silicon Macs)
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:TAG .
 
 # Login to ACR
 az acr login --name acrsandboxwus2
@@ -842,67 +893,6 @@ kubectl get configmap argocd-image-updater-config -n argocd -o yaml
 # View registries config specifically
 kubectl get configmap argocd-image-updater-config -n argocd -o jsonpath='{.data.registries\.conf}'
 ```
-
----
-
-## 🔧 Troubleshooting
-
-### Image Updater not detecting new images
-
-```bash
-# Check logs
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater
-
-# Common issues:
-# - "unauthorized" = ACR credentials incorrect
-# - "no images found" = image-list annotation wrong
-```
-
-### Pods in "ImagePullBackOff" state
-
-```bash
-# Reattach ACR to AKS
-az aks update \
-  --resource-group rg-sandbox-horizon \
-  --name aks-sandbox-wus2 \
-  --attach-acr acrsandboxwus2
-```
-
-### Can't access Argo CD UI
-
-```bash
-# Check service
-kubectl get svc argocd-server -n argocd
-
-# Use port-forward if no external IP
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-```
-
-### Verify ACR connection from cluster
-
-```bash
-kubectl run --rm -it test-acr --image=mcr.microsoft.com/azure-cli --restart=Never -- \
-  az acr repository list --name acrsandboxwus2 --output table
-```
-
-### Force deployment update
-
-```bash
-# Restart Image Updater
-kubectl rollout restart deployment argocd-image-updater-controller -n argocd
-
-# Or sync Argo CD manually
-argocd app sync test-app
-```
-
----
-
-## 📚 Additional Resources
-
-- [Argo CD Documentation](https://argo-cd.readthedocs.io/)
-- [Argo CD Image Updater](https://argocd-image-updater.readthedocs.io/)
-- [Azure Container Registry](https://docs.microsoft.com/azure/container-registry/)
-- [Azure Kubernetes Service](https://docs.microsoft.com/azure/aks/)
 
 ---
 

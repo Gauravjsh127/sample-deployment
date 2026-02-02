@@ -117,7 +117,8 @@ Once Argo CD and Image Updater are configured (see guide), deploying is simple:
 
 ```bash
 # 1. Build your image
-docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+# ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
 
 # 2. Login and push to ACR
 az acr login --name acrsandboxwus2
@@ -140,8 +141,8 @@ export AKS_CLUSTER_NAME="aks-sandbox-wus2"
 # 2. Login to Azure
 az login
 
-# 3. Build & push image
-docker build -t acrsandboxwus2.azurecr.io/test_app:latest .
+# 3. Build & push image (use --platform linux/amd64 on Apple Silicon Macs)
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:latest .
 az acr login --name acrsandboxwus2
 docker push acrsandboxwus2.azurecr.io/test_app:latest
 
