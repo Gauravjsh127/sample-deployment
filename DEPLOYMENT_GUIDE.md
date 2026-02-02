@@ -499,7 +499,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
+    repoURL: https://github.com/Gauravjsh127/sample-deployment.git
     targetRevision: HEAD
     path: helm/fastapi-service
     helm:

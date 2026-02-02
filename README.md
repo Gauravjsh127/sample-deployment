@@ -84,8 +84,8 @@ Expected response:
 ```json
 {
   "status": "healthy",
-  "timestamp": "2024-01-29T10:30:00.000000",
-  "service": "test_app"
+  "timestamp": "2024-01-29T10:30:00.000000+00:00",
+  "service": "fastapi-service"
 }
 ```
 
@@ -149,7 +149,7 @@ docker push acrsandboxwus2.azurecr.io/test_app:latest
 az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER_NAME
 
 # 5. Deploy with Helm
-helm install fastapi-release ./helm/test_app
+helm install fastapi-release ./helm/fastapi-service
 
 # 6. Get External IP
 kubectl get svc -w
@@ -159,14 +159,11 @@ kubectl get svc -w
 
 ```
 .
-├── .github/
-│   └── workflows/
-│       └── ci-cd.yml           # GitHub Actions CI/CD pipeline
 ├── app/
 │   ├── __init__.py
-│   └── main.py
+│   └── main.py                 # FastAPI application
 ├── helm/
-│   └── test_app/        # Helm chart for Kubernetes deployment
+│   └── fastapi-service/        # Helm chart for Kubernetes deployment
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
