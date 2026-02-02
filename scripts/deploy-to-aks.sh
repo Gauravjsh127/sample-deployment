@@ -14,12 +14,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default configuration (customize these)
-RESOURCE_GROUP="${RESOURCE_GROUP:-fastapi-rg}"
-LOCATION="${LOCATION:-eastus}"
-ACR_NAME="${ACR_NAME:-fastapiserviceacr}"
-AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-fastapi-aks-cluster}"
-IMAGE_NAME="fastapi-service"
+# Default configuration - Pre-configured Azure resources
+RESOURCE_GROUP="${RESOURCE_GROUP:-rg-sandbox-horizon}"
+LOCATION="${LOCATION:-westus2}"
+ACR_NAME="${ACR_NAME:-acrsandboxwus2}"
+AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-aks-sandbox-wus2}"
+IMAGE_NAME="test_app"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 HELM_RELEASE_NAME="fastapi-release"
 
@@ -272,10 +272,10 @@ show_usage() {
     echo "  --help          Show this help message"
     echo ""
     echo "Environment Variables:"
-    echo "  RESOURCE_GROUP      Azure resource group name (default: fastapi-rg)"
-    echo "  LOCATION            Azure region (default: eastus)"
-    echo "  ACR_NAME            Azure Container Registry name (default: fastapiserviceacr)"
-    echo "  AKS_CLUSTER_NAME    AKS cluster name (default: fastapi-aks-cluster)"
+    echo "  RESOURCE_GROUP      Azure resource group name (default: rg-sandbox-horizon)"
+    echo "  LOCATION            Azure region (default: westus2)"
+    echo "  ACR_NAME            Azure Container Registry name (default: acrsandboxwus2)"
+    echo "  AKS_CLUSTER_NAME    AKS cluster name (default: aks-sandbox-wus2)"
     echo "  IMAGE_TAG           Docker image tag (default: latest)"
 }
 

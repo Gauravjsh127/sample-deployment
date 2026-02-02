@@ -47,12 +47,12 @@ A minimal FastAPI service with health check endpoint and Swagger documentation.
 
 1. Build the Docker image:
    ```bash
-   docker build -t fastapi-service .
+   docker build -t test_app .
    ```
 
 2. Run the container:
    ```bash
-   docker run -p 8000:8000 fastapi-service
+   docker run -p 8000:8000 test_app
    ```
 
 ### Option 3: Using Docker Compose (Recommended)
@@ -85,66 +85,71 @@ Expected response:
 {
   "status": "healthy",
   "timestamp": "2024-01-29T10:30:00.000000",
-  "service": "fastapi-service"
+  "service": "test_app"
 }
 ```
 
 ## Deploy to Azure Kubernetes Service (AKS)
 
-### 🚀 Full CI/CD Pipeline (Recommended)
+### Pre-Configured Azure Resources
 
-For a complete automated CI/CD setup with **GitHub Actions + Azure Container Registry + Argo CD + AKS**, see the comprehensive guide:
+| Resource | Value |
+|----------|-------|
+| **Resource Group** | `rg-sandbox-horizon` |
+| **Region** | `West US 2` |
+| **AKS Cluster** | `aks-sandbox-wus2` |
+| **Container Registry** | `acrsandboxwus2.azurecr.io` |
+
+### 🚀 Registry-Driven Deployment (Recommended)
+
+For the complete deployment guide with **Argo CD Image Updater**, see:
 
 **[📖 DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)**
 
 This guide covers:
-- GitHub Actions for automated builds
-- Azure Container Registry for image storage
-- Argo CD for GitOps-based deployments
-- Helm for Kubernetes package management
-- Step-by-step setup from scratch
+- Local Docker build and push to ACR
+- Argo CD Image Updater for automatic deployments
+- No CI/CD pipeline needed - just push and deploy!
 
-### Quick Deploy (Automated Script)
+### Quick Deploy
+
+Once Argo CD and Image Updater are configured (see guide), deploying is simple:
 
 ```bash
-# Make script executable
-chmod +x scripts/deploy-to-aks.sh
+# 1. Build your image
+docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
 
-# Run full deployment
-./scripts/deploy-to-aks.sh
+# 2. Login and push to ACR
+az acr login --name acrsandboxwus2
+docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
 
-# Or customize with environment variables
-RESOURCE_GROUP="my-rg" ACR_NAME="myacr" ./scripts/deploy-to-aks.sh
+# 3. Image Updater automatically detects and deploys!
+
+# 4. Check deployment status
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
 ```
 
-### Manual Deploy (Step by Step)
+### Manual Deploy (Without Image Updater)
 
 ```bash
 # 1. Set variables
-export RESOURCE_GROUP="fastapi-rg"
-export LOCATION="eastus"
-export ACR_NAME="fastapiserviceacr"
-export AKS_CLUSTER_NAME="fastapi-aks-cluster"
+export RESOURCE_GROUP="rg-sandbox-horizon"
+export ACR_NAME="acrsandboxwus2"
+export AKS_CLUSTER_NAME="aks-sandbox-wus2"
 
-# 2. Login & create resources
+# 2. Login to Azure
 az login
-az group create --name $RESOURCE_GROUP --location $LOCATION
-az acr create --resource-group $RESOURCE_GROUP --name $ACR_NAME --sku Basic --admin-enabled true
-export ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer --output tsv)
 
 # 3. Build & push image
-docker build -t fastapi-service:latest .
-docker tag fastapi-service:latest $ACR_LOGIN_SERVER/fastapi-service:latest
-az acr login --name $ACR_NAME
-docker push $ACR_LOGIN_SERVER/fastapi-service:latest
+docker build -t acrsandboxwus2.azurecr.io/test_app:latest .
+az acr login --name acrsandboxwus2
+docker push acrsandboxwus2.azurecr.io/test_app:latest
 
-# 4. Create AKS & deploy
-az aks create --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER_NAME --node-count 2 --node-vm-size Standard_B2s --enable-managed-identity --generate-ssh-keys
+# 4. Get AKS credentials
 az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER_NAME
-az aks update --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER_NAME --attach-acr $ACR_NAME
 
 # 5. Deploy with Helm
-helm install fastapi-release ./helm/fastapi-service --set image.repository=$ACR_LOGIN_SERVER/fastapi-service --set image.tag=latest
+helm install fastapi-release ./helm/test_app
 
 # 6. Get External IP
 kubectl get svc -w
@@ -161,7 +166,7 @@ kubectl get svc -w
 │   ├── __init__.py
 │   └── main.py
 ├── helm/
-│   └── fastapi-service/        # Helm chart for Kubernetes deployment
+│   └── test_app/        # Helm chart for Kubernetes deployment
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/

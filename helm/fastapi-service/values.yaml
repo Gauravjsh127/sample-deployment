@@ -6,7 +6,7 @@ replicaCount: 2
 
 # Image configuration
 image:
-  repository: ""  # Will be set during deployment: <acr-name>.azurecr.io/fastapi-service
+  repository: acrsandboxwus2.azurecr.io/test_app
   pullPolicy: Always
   tag: "latest"
 

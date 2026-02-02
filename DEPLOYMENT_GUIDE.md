@@ -1,97 +1,123 @@
-# Complete CI/CD Deployment Guide
-## GitHub Actions + Azure Container Registry + Argo CD + AKS
+# Registry-Driven Deployment Guide
+## Local Build → ACR → Argo CD Image Updater → AKS
 
-This guide will walk you through setting up a complete CI/CD pipeline from scratch. We'll use:
-- **GitHub Actions** - To build and push Docker images automatically
-- **Azure Container Registry (ACR)** - To store Docker images
-- **Azure Kubernetes Service (AKS)** - To run your application
-- **Argo CD** - To automatically deploy changes to Kubernetes
-- **Helm** - To manage Kubernetes deployments
+This guide walks you through deploying applications using a **registry-driven** approach:
+- Build Docker images **locally**
+- Push to **Azure Container Registry (ACR)**
+- **Argo CD Image Updater** automatically detects new images
+- **Argo CD** deploys to **Azure Kubernetes Service (AKS)**
+
+---
+
+## 🎯 Pre-Configured Azure Resources
+
+| Resource | Name | Details |
+|----------|------|---------|
+| **Resource Group** | `rg-sandbox-horizon` | Container for all resources |
+| **Region** | `West US 2` | Azure region |
+| **AKS Cluster** | `aks-sandbox-wus2` | Kubernetes cluster |
+| **Container Registry** | `acrsandboxwus2` | Docker image registry |
+| **ACR Login Server** | `acrsandboxwus2.azurecr.io` | URL for pushing images |
+| **Image Name** | `test_app` | Repository name in ACR |
+
+---
+
+## ⚡ Quick Start: Push an Image (If Already Set Up)
+
+If Argo CD and Image Updater are already configured, use this to deploy:
+
+```bash
+# 1. Login to ACR
+az acr login --name acrsandboxwus2
+
+# 2. Build image (from project directory)
+docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+
+# 3. Push to ACR
+docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
+
+# 4. Done! Image Updater auto-deploys within 2 minutes
+# Monitor with: kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
+```
+
+> **First time setup?** Follow the complete guide below starting from [Step 1](#step-1-install-required-tools).
+
+---
+
+## 🔄 Deployment Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│              REGISTRY-DRIVEN DEPLOYMENT FLOW                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+  YOU (Local Machine)                           AZURE
+   │                                              │
+   │  1. docker build                             │
+   │     Build your image locally                 │
+   │                                              │
+   │  2. docker push ─────────────────────────────│──> ACR
+   │     Push to Azure Container Registry         │    (acrsandboxwus2.azurecr.io)
+   │                                              │
+   │                                              │
+   │                     ┌────────────────────────┤
+   │                     │  3. Image Updater      │
+   │                     │     polls ACR          │
+   │                     │     (every 2 min)      │
+   │                     │                        │
+   │                     ▼                        │
+   │              Detects new image tag           │
+   │                     │                        │
+   │                     ▼                        │
+   │              4. Updates Argo CD App          │
+   │                     │                        │
+   │                     ▼                        │
+   │              5. Argo CD syncs ───────────────│──> AKS
+   │                     │                        │    (aks-sandbox-wus2)
+   │                     ▼                        │
+   │  6. App is Live! ◄──────────────────────────-│
+   │                                              │
+```
+
+**In Simple Words:**
+1. You build a Docker image on your local machine
+2. You push it to Azure Container Registry
+3. Argo CD Image Updater detects the new image
+4. Argo CD automatically deploys to AKS
+5. Your app is live!
 
 ---
 
 ## 📋 Table of Contents
 
-1. [Understanding the CI/CD Flow](#understanding-the-cicd-flow)
+1. [Quick Start: Push an Image](#-quick-start-push-an-image-if-already-set-up)
 2. [Prerequisites](#prerequisites)
 3. [Step 1: Install Required Tools](#step-1-install-required-tools)
-4. [Step 2: Create Azure Resources](#step-2-create-azure-resources)
-5. [Step 3: Configure GitHub Repository](#step-3-configure-github-repository)
-6. [Step 4: Set Up GitHub Actions CI Pipeline](#step-4-set-up-github-actions-ci-pipeline)
-7. [Step 5: Install Argo CD on AKS](#step-5-install-argo-cd-on-aks)
-8. [Step 6: Configure Argo CD to Deploy Your App](#step-6-configure-argo-cd-to-deploy-your-app)
-9. [Step 7: Test the Complete Pipeline](#step-7-test-the-complete-pipeline)
-10. [Troubleshooting](#troubleshooting)
-
----
-
-## 🔄 Understanding the CI/CD Flow
-
-Before we start, let's understand what happens when you push code:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CI/CD PIPELINE FLOW                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-  YOU                    GITHUB                    AZURE                    
-   │                        │                         │                      
-   │  1. Push Code          │                         │                      
-   │ ──────────────────────>│                         │                      
-   │                        │                         │                      
-   │                        │  2. GitHub Actions      │                      
-   │                        │     - Build Docker      │                      
-   │                        │     - Run Tests         │                      
-   │                        │     - Push to ACR ─────>│ Azure Container      
-   │                        │                         │ Registry (ACR)       
-   │                        │                         │                      
-   │                        │  3. Update Helm         │                      
-   │                        │     values (image tag)  │                      
-   │                        │                         │                      
-   │                        │                         │                      
-   │                   ARGO CD (running in AKS)       │                      
-   │                        │                         │                      
-   │                        │  4. Argo CD detects     │                      
-   │                        │     changes in Git      │                      
-   │                        │                         │                      
-   │                        │  5. Argo CD pulls new   │                      
-   │                        │     image from ACR <────│                      
-   │                        │                         │                      
-   │                        │  6. Deploys to AKS ────>│ Azure Kubernetes     
-   │                        │                         │ Service (AKS)        
-   │                        │                         │                      
-   │  7. App is Live!       │                         │                      
-   │ <──────────────────────────────────────────────────                     
-   │                        │                         │                      
-```
-
-**In Simple Words:**
-1. You push code to GitHub
-2. GitHub Actions automatically builds a Docker image and pushes it to Azure Container Registry
-3. GitHub Actions updates the Helm chart with the new image tag
-4. Argo CD (watching your Git repository) detects the change
-5. Argo CD pulls the new image from ACR and deploys it to AKS
-6. Your updated app is now live!
+4. [Step 2: Connect to Azure Resources](#step-2-connect-to-azure-resources)
+5. [Step 3: Install Argo CD on AKS](#step-3-install-argo-cd-on-aks)
+6. [Step 4: Install Argo CD Image Updater](#step-4-install-argo-cd-image-updater)
+7. [Step 5: Configure Argo CD Application](#step-5-configure-argo-cd-application)
+8. [Step 6: Build and Push Image to ACR](#step-6-build-and-push-image-to-acr)
+9. [Complete Image Push Workflow](#-complete-image-push-workflow-copy--paste)
+10. [Deploy a New Version](#-deploy-a-new-version)
+11. [Quick Reference Commands](#-quick-reference-commands)
+12. [Troubleshooting](#-troubleshooting)
 
 ---
 
 ## ✅ Prerequisites
 
-Before starting, you need:
-
-| Requirement | Description | How to Get It |
-|-------------|-------------|---------------|
-| **Azure Account** | Free account works | [Sign up here](https://azure.microsoft.com/free/) |
-| **GitHub Account** | Where your code lives | [Sign up here](https://github.com/) |
-| **Your Code on GitHub** | Repository with this project | Push your code to GitHub |
+| Requirement | Description |
+|-------------|-------------|
+| **Azure Account** | Access to the pre-configured resources |
+| **Docker** | For building images locally |
+| **Your Code** | This repository cloned locally |
 
 ---
 
 ## Step 1: Install Required Tools
 
 ### 1.1 Install Azure CLI
-
-Azure CLI lets you control Azure from your terminal.
 
 **On macOS:**
 ```bash
@@ -108,14 +134,12 @@ winget install Microsoft.AzureCLI
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 ```
 
-**Verify installation:**
+**Verify:**
 ```bash
 az --version
 ```
 
 ### 1.2 Install kubectl
-
-kubectl lets you control Kubernetes clusters.
 
 **On macOS:**
 ```bash
@@ -133,14 +157,12 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 ```
 
-**Verify installation:**
+**Verify:**
 ```bash
 kubectl version --client
 ```
 
 ### 1.3 Install Helm
-
-Helm is a package manager for Kubernetes.
 
 **On macOS:**
 ```bash
@@ -157,127 +179,68 @@ winget install Helm.Helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
-**Verify installation:**
+**Verify:**
 ```bash
 helm version
 ```
 
-### 1.4 Install Docker (for local testing)
+### 1.4 Install Docker
 
 **Download from:** https://docs.docker.com/get-docker/
 
 ---
 
-## Step 2: Create Azure Resources
+## Step 2: Connect to Azure Resources
 
 ### 2.1 Login to Azure
 
 ```bash
 az login
 ```
-This opens a browser window. Sign in with your Azure account.
 
-### 2.2 Set Your Subscription (if you have multiple)
+### 2.2 Set Subscription (if needed)
 
 ```bash
-# List all subscriptions
+# List subscriptions
 az account list --output table
 
-# Set the subscription you want to use
+# Set subscription
 az account set --subscription "YOUR_SUBSCRIPTION_NAME_OR_ID"
 ```
 
-### 2.3 Create a Resource Group
-
-A Resource Group is like a folder that holds all your Azure resources.
+### 2.3 Verify Resources Exist
 
 ```bash
-# Choose a name and location
-RESOURCE_GROUP="fastapi-cicd-rg"
-LOCATION="eastus"
+# Set variables
+RESOURCE_GROUP="rg-sandbox-horizon"
+ACR_NAME="acrsandboxwus2"
+AKS_CLUSTER_NAME="aks-sandbox-wus2"
 
-# Create the resource group
-az group create --name $RESOURCE_GROUP --location $LOCATION
+# Verify resource group
+az group show --name $RESOURCE_GROUP --query name
+
+# Verify ACR
+az acr show --name $ACR_NAME --query loginServer --output tsv
+
+# Verify AKS
+az aks show --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER_NAME --query name
 ```
 
-**Expected Output:**
-```json
-{
-  "id": "/subscriptions/.../resourceGroups/fastapi-cicd-rg",
-  "location": "eastus",
-  "name": "fastapi-cicd-rg",
-  "properties": {
-    "provisioningState": "Succeeded"
-  }
-}
-```
-
-### 2.4 Create Azure Container Registry (ACR)
-
-ACR stores your Docker images (like Docker Hub but in Azure).
-
-```bash
-# Choose a unique name (only lowercase letters and numbers, 5-50 characters)
-ACR_NAME="fastapiserviceacr$(date +%s | tail -c 6)"
-
-# Create ACR
-az acr create \
-  --resource-group $RESOURCE_GROUP \
-  --name $ACR_NAME \
-  --sku Basic \
-  --admin-enabled true
-
-# Get the ACR login server URL (you'll need this later)
-ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer --output tsv)
-echo "Your ACR Login Server: $ACR_LOGIN_SERVER"
-```
-
-**Save this value!** It looks like: `fastapiserviceacr12345.azurecr.io`
-
-### 2.5 Create Azure Kubernetes Service (AKS)
-
-AKS is where your application will run.
-
-```bash
-AKS_CLUSTER_NAME="fastapi-aks-cluster"
-
-# Create AKS cluster (this takes 5-10 minutes)
-az aks create \
-  --resource-group $RESOURCE_GROUP \
-  --name $AKS_CLUSTER_NAME \
-  --node-count 2 \
-  --node-vm-size Standard_B2s \
-  --enable-managed-identity \
-  --generate-ssh-keys
-
-echo "AKS cluster creation started. This takes about 5-10 minutes..."
-```
-
-**What each option means:**
-- `--node-count 2`: Creates 2 virtual machines (nodes) to run your containers
-- `--node-vm-size Standard_B2s`: Uses a small, cost-effective VM size
-- `--enable-managed-identity`: Allows AKS to securely access other Azure resources
-- `--generate-ssh-keys`: Creates SSH keys for node access
-
-### 2.6 Connect AKS to ACR
-
-Allow AKS to pull images from your container registry:
+### 2.4 Connect AKS to ACR
 
 ```bash
 az aks update \
-  --resource-group $RESOURCE_GROUP \
-  --name $AKS_CLUSTER_NAME \
-  --attach-acr $ACR_NAME
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --attach-acr acrsandboxwus2
 ```
 
-### 2.7 Get AKS Credentials
-
-Download the credentials to control your AKS cluster:
+### 2.5 Get AKS Credentials
 
 ```bash
 az aks get-credentials \
-  --resource-group $RESOURCE_GROUP \
-  --name $AKS_CLUSTER_NAME
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2
 ```
 
 **Verify connection:**
@@ -285,267 +248,63 @@ az aks get-credentials \
 kubectl get nodes
 ```
 
-**Expected Output:**
-```
-NAME                                STATUS   ROLES   AGE   VERSION
-aks-nodepool1-12345678-vmss000000   Ready    agent   5m    v1.28.0
-aks-nodepool1-12345678-vmss000001   Ready    agent   5m    v1.28.0
+Or use AKS command invoke:
+```bash
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get nodes"
 ```
 
 ---
 
-## Step 3: Configure GitHub Repository
+## Step 3: Install Argo CD on AKS
 
-### 3.1 Create a Service Principal for GitHub
-
-GitHub needs permission to push images to ACR. We create a "Service Principal" (like a service account):
-
-```bash
-# Get your subscription ID
-SUBSCRIPTION_ID=$(az account show --query id --output tsv)
-
-# Create service principal with ACR push permissions
-SP_OUTPUT=$(az ad sp create-for-rbac \
-  --name "github-actions-acr-sp" \
-  --role AcrPush \
-  --scopes /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ContainerRegistry/registries/$ACR_NAME \
-  --sdk-auth)
-
-echo "$SP_OUTPUT"
-```
-
-**⚠️ IMPORTANT: Save this entire JSON output!** You'll need it for GitHub secrets.
-
-The output looks like:
-```json
-{
-  "clientId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "clientSecret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "subscriptionId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "tenantId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  ...
-}
-```
-
-### 3.2 Add Secrets to GitHub
-
-1. Go to your GitHub repository
-2. Click **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret** and add these secrets:
-
-| Secret Name | Value |
-|-------------|-------|
-| `AZURE_CREDENTIALS` | The entire JSON output from step 3.1 |
-| `ACR_LOGIN_SERVER` | Your ACR login server (e.g., `fastapiserviceacr12345.azurecr.io`) |
-| `ACR_USERNAME` | Get with: `az acr credential show --name $ACR_NAME --query username -o tsv` |
-| `ACR_PASSWORD` | Get with: `az acr credential show --name $ACR_NAME --query passwords[0].value -o tsv` |
-
-**To get ACR credentials:**
-```bash
-# Get ACR username
-az acr credential show --name $ACR_NAME --query username -o tsv
-
-# Get ACR password
-az acr credential show --name $ACR_NAME --query passwords[0].value -o tsv
-```
-
----
-
-## Step 4: Set Up GitHub Actions CI Pipeline
-
-### 4.1 Create the GitHub Actions Workflow
-
-Create a new file in your repository: `.github/workflows/ci-cd.yml`
-
-```yaml
-name: CI/CD Pipeline
-
-on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
-
-env:
-  IMAGE_NAME: fastapi-service
-
-jobs:
-  # ==========================================
-  # JOB 1: Build, Test, and Push Docker Image
-  # ==========================================
-  build-and-push:
-    name: Build and Push to ACR
-    runs-on: ubuntu-latest
-    
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
-    
-    steps:
-      # Step 1: Get the code
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Step 2: Set up Docker Buildx (for better builds)
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Step 3: Login to Azure Container Registry
-      - name: Login to ACR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.ACR_LOGIN_SERVER }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
-      # Step 4: Generate image tags
-      - name: Generate Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
-            type=ref,event=pr
-
-      # Step 5: Build and push image
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Step 6: Print image info
-      - name: Print image tags
-        run: |
-          echo "Image pushed with tags:"
-          echo "${{ steps.meta.outputs.tags }}"
-
-  # ==========================================
-  # JOB 2: Update Helm Chart with New Image Tag
-  # ==========================================
-  update-helm-values:
-    name: Update Helm Values
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: github.event_name != 'pull_request'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update Helm values.yaml with new image tag
-        run: |
-          # Get the short SHA
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          
-          # Update the image repository and tag in values.yaml
-          sed -i "s|repository:.*|repository: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}|g" helm/fastapi-service/values.yaml
-          sed -i "s|tag:.*|tag: \"${SHORT_SHA}\"|g" helm/fastapi-service/values.yaml
-          
-          # Show the changes
-          echo "Updated values.yaml:"
-          cat helm/fastapi-service/values.yaml
-
-      - name: Commit and push changes
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add helm/fastapi-service/values.yaml
-          git diff --staged --quiet || git commit -m "Update image tag to ${{ github.sha }}"
-          git push
-```
-
-### 4.2 What This Workflow Does
-
-1. **Triggers**: Runs on every push to `main` or `master` branch
-2. **Build and Push Job**:
-   - Checks out your code
-   - Logs into Azure Container Registry
-   - Builds the Docker image
-   - Pushes it to ACR with tags based on the commit SHA
-3. **Update Helm Values Job**:
-   - Updates `helm/fastapi-service/values.yaml` with the new image tag
-   - Commits and pushes the change
-   - This triggers Argo CD to deploy the new version!
-
-### 4.3 Push the Workflow to GitHub
-
-```bash
-# Create the directory
-mkdir -p .github/workflows
-
-# Create the file (copy the content from above)
-# Then commit and push
-git add .github/workflows/ci-cd.yml
-git commit -m "Add CI/CD pipeline"
-git push
-```
-
----
-
-## Step 5: Install Argo CD on AKS
-
-### 5.1 Create Argo CD Namespace
+### 3.1 Create Namespace
 
 ```bash
 kubectl create namespace argocd
 ```
 
-### 5.2 Install Argo CD
+### 3.2 Install Argo CD
 
 ```bash
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 ```
 
-**Wait for all pods to be ready (takes 2-3 minutes):**
+**Wait for pods to be ready:**
 ```bash
 kubectl wait --for=condition=Ready pods --all -n argocd --timeout=300s
 ```
 
-### 5.3 Access Argo CD UI
+### 3.3 Expose Argo CD UI
 
-**Option A: Using LoadBalancer (Recommended for testing)**
-
+**Option A: LoadBalancer (Recommended)**
 ```bash
-# Change the argocd-server service to LoadBalancer
 kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
 
-# Get the external IP (wait until EXTERNAL-IP shows an IP, not <pending>)
+# Get external IP (wait for IP to appear)
 kubectl get svc argocd-server -n argocd -w
 ```
 
-**Option B: Using Port Forward (Quick local access)**
-
+**Option B: Port Forward (Local access)**
 ```bash
 kubectl port-forward svc/argocd-server -n argocd 8080:443
+# Open: https://localhost:8080
 ```
-Then open: https://localhost:8080
 
-### 5.4 Get Argo CD Admin Password
+### 3.4 Get Admin Password
 
 ```bash
-# Get the initial admin password
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
-echo  # Add newline for readability
+echo
 ```
 
-**Login credentials:**
-- **Username**: `admin`
-- **Password**: (the output from above command)
+**Login:**
+- **Username:** `admin`
+- **Password:** (output from above)
 
-### 5.5 Install Argo CD CLI (Optional but Useful)
+### 3.5 Install Argo CD CLI (Optional)
 
 **On macOS:**
 ```bash
@@ -561,201 +320,482 @@ rm argocd-linux-amd64
 
 **Login with CLI:**
 ```bash
-# Get the external IP
 ARGOCD_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-# Login (use --insecure because we don't have TLS set up yet)
 argocd login $ARGOCD_SERVER --insecure
-
-# When prompted, enter:
-# Username: admin
-# Password: (the password from step 5.4)
 ```
 
 ---
 
-## Step 6: Configure Argo CD to Deploy Your App
+## Step 4: Install Argo CD Image Updater
 
-### 6.1 Create an Argo CD Application
+Image Updater watches ACR and automatically updates deployments when new images are pushed.
 
-You can do this via the UI or CLI. Here's both methods:
+### 4.1 Install via Helm
 
-#### Method A: Using the Argo CD UI
+**Option A: Direct kubectl access:**
+```bash
+# Add Argo Helm repository
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
 
-1. Open Argo CD UI in your browser
-2. Click **+ NEW APP**
-3. Fill in the form:
+# Install Image Updater
+helm install argocd-image-updater argo/argocd-image-updater \
+  --namespace argocd \
+  --set 'config.registries[0].name=Azure' \
+  --set 'config.registries[0].prefix=acrsandboxwus2.azurecr.io' \
+  --set 'config.registries[0].api_url=https://acrsandboxwus2.azurecr.io' \
+  --set 'config.registries[0].default=true'
+```
 
-| Field | Value |
-|-------|-------|
-| **Application Name** | `fastapi-service` |
-| **Project** | `default` |
-| **Sync Policy** | `Automatic` |
-| **Repository URL** | `https://github.com/YOUR_USERNAME/YOUR_REPO.git` |
-| **Path** | `helm/fastapi-service` |
-| **Cluster URL** | `https://kubernetes.default.svc` |
-| **Namespace** | `default` |
+**Option B: Via AKS command invoke (for private clusters):**
+```bash
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update && helm install argocd-image-updater argo/argocd-image-updater --namespace argocd --set config.registries[0].name=Azure --set config.registries[0].prefix=acrsandboxwus2.azurecr.io --set config.registries[0].api_url=https://acrsandboxwus2.azurecr.io --set config.registries[0].default=true"
+```
 
-4. Click **CREATE**
+**Verify installation:**
+```bash
+# Direct kubectl
+kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-image-updater
 
-#### Method B: Using a YAML File (Recommended)
+# Or via AKS command invoke
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-image-updater"
+```
 
-Create a file called `argocd-application.yaml`:
+### 4.2 Configure ACR Credentials
+
+**Option A: Direct kubectl access:**
+```bash
+# Get ACR password and create secret
+ACR_PASSWORD=$(az acr credential show --name acrsandboxwus2 --query "passwords[0].value" -o tsv)
+
+kubectl -n argocd create secret docker-registry acr-creds \
+  --docker-server=acrsandboxwus2.azurecr.io \
+  --docker-username=acrsandboxwus2 \
+  --docker-password="$ACR_PASSWORD"
+```
+
+**Option B: Via AKS command invoke (for private clusters):**
+
+> **Important:** When using `az aks command invoke`, you must get the password and create the secret in a single command chain, as variables are not preserved between invocations.
+
+```bash
+# Get ACR password and create secret in one command
+ACR_PASSWORD=$(az acr credential show --name acrsandboxwus2 --query "passwords[0].value" -o tsv) && \
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl -n argocd create secret docker-registry acr-creds --docker-server=acrsandboxwus2.azurecr.io --docker-username=acrsandboxwus2 --docker-password='$ACR_PASSWORD'"
+```
+
+**Verify secret was created:**
+```bash
+# Direct kubectl
+kubectl get secret acr-creds -n argocd
+
+# Or via AKS command invoke
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get secret acr-creds -n argocd"
+```
+
+### 4.3 Configure Registry in Image Updater
+
+The configmap needs to include the `credentials` field to reference the ACR secret.
+
+**Option A: Direct kubectl access:**
+```bash
+# View current configmap
+kubectl get configmap argocd-image-updater-config -n argocd -o yaml
+
+# Edit the configmap
+kubectl edit configmap argocd-image-updater-config -n argocd
+```
+
+Add/update the `registries.conf` section:
+
+```yaml
+data:
+  registries.conf: |
+    registries:
+    - name: Azure
+      prefix: acrsandboxwus2.azurecr.io
+      api_url: https://acrsandboxwus2.azurecr.io
+      credentials: pullsecret:argocd/acr-creds
+      default: true
+```
+
+**Option B: Via AKS command invoke (for private clusters):**
+
+> **Note:** `kubectl edit` does not work via `az aks command invoke` because there is no interactive terminal. Use `kubectl patch` instead.
+
+```bash
+# View current configmap
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get configmap argocd-image-updater-config -n argocd -o yaml"
+
+# Patch the configmap to add credentials
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl patch configmap argocd-image-updater-config -n argocd --type merge -p '{\"data\":{\"registries.conf\":\"registries:\\n  - api_url: https://acrsandboxwus2.azurecr.io\\n    default: true\\n    name: Azure\\n    prefix: acrsandboxwus2.azurecr.io\\n    credentials: pullsecret:argocd/acr-creds\\n\"}}'"
+```
+
+**Restart Image Updater to apply changes:**
+
+```bash
+# Direct kubectl
+kubectl rollout restart deployment argocd-image-updater-controller -n argocd
+
+# Or via AKS command invoke
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl rollout restart deployment argocd-image-updater-controller -n argocd"
+```
+
+**Verify the configmap was updated:**
+```bash
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl get configmap argocd-image-updater-config -n argocd -o jsonpath='{.data.registries\\.conf}'"
+```
+
+---
+
+## Step 5: Configure Argo CD Application
+
+### 5.1 Update argocd-application.yaml
+
+Edit `argocd-application.yaml` and replace `YOUR_GITHUB_USERNAME/YOUR_REPO_NAME` with your repository:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: fastapi-service
+  name: test-app
   namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Image Updater: Track this image
+    argocd-image-updater.argoproj.io/image-list: fastapi=acrsandboxwus2.azurecr.io/test_app
+    # Update strategy: Use newest image by build date
+    argocd-image-updater.argoproj.io/fastapi.update-strategy: latest
+    # Map to Helm values
+    argocd-image-updater.argoproj.io/fastapi.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/fastapi.helm.image-tag: image.tag
+    # Update Argo CD directly (no Git commit needed)
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: default
-  
   source:
-    # Replace with your GitHub repository URL
-    repoURL: https://github.com/YOUR_USERNAME/YOUR_REPO.git
+    repoURL: https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
     targetRevision: HEAD
     path: helm/fastapi-service
-    
-    # Helm-specific configuration
     helm:
       valueFiles:
         - values.yaml
-  
   destination:
     server: https://kubernetes.default.svc
     namespace: default
-  
   syncPolicy:
     automated:
-      prune: true      # Delete resources that are no longer in Git
-      selfHeal: true   # Automatically fix drift
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ```
 
-**Apply it:**
+### 5.2 Apply the Application
+
+**Option A: Direct kubectl access:**
 ```bash
 kubectl apply -f argocd-application.yaml
 ```
 
-### 6.2 Verify Application is Syncing
+**Option B: Via AKS command invoke (for private clusters):**
 
-Check in the Argo CD UI or use CLI:
-
-```bash
-argocd app get fastapi-service
-```
-
-**Expected output:**
-```
-Name:               fastapi-service
-Project:            default
-Server:             https://kubernetes.default.svc
-Namespace:          default
-URL:                https://argocd.example.com/applications/fastapi-service
-Repo:               https://github.com/YOUR_USERNAME/YOUR_REPO.git
-Target:             HEAD
-Path:               helm/fastapi-service
-SyncWindow:         Sync Allowed
-Sync Policy:        Automated (Prune)
-Sync Status:        Synced to HEAD (abc1234)
-Health Status:      Healthy
-```
-
-### 6.3 Check Your Application is Running
+> **Important:** When using `az aks command invoke`, you must use the `--file` parameter to upload the local YAML file to the remote command context.
 
 ```bash
-# See all resources deployed
-kubectl get all -l app.kubernetes.io/name=fastapi-service
-
-# Get the external IP of your app
-kubectl get svc
+az aks command invoke \
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --command "kubectl apply -f argocd-application.yaml" \
+  --file argocd-application.yaml
 ```
 
-**Access your app:**
-- API: `http://EXTERNAL_IP/`
-- Health: `http://EXTERNAL_IP/health`
-- Docs: `http://EXTERNAL_IP/docs`
-
----
-
-## Step 7: Test the Complete Pipeline
-
-Let's make a change and watch the entire pipeline work!
-
-### 7.1 Make a Code Change
-
-Edit `app/main.py` and change the welcome message:
-
-```python
-@app.get("/")
-async def root():
-    return {"message": "Hello from CI/CD Pipeline! 🚀"}
-```
-
-### 7.2 Commit and Push
+### 5.3 Verify Application
 
 ```bash
-git add app/main.py
-git commit -m "Update welcome message"
-git push
-```
+# Check in Argo CD
+argocd app get test-app
 
-### 7.3 Watch the Pipeline
-
-1. **GitHub Actions**: 
-   - Go to your GitHub repo → **Actions** tab
-   - Watch the workflow run (takes 2-3 minutes)
-   
-2. **Argo CD**:
-   - Open Argo CD UI
-   - Watch the `fastapi-service` app sync
-   - It will show "Syncing" then "Healthy"
-
-3. **Verify the Change**:
-   ```bash
-   curl http://EXTERNAL_IP/
-   # Should show: {"message":"Hello from CI/CD Pipeline! 🚀"}
-   ```
-
----
-
-## 🎉 Congratulations!
-
-You now have a fully automated CI/CD pipeline:
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    YOUR CI/CD PIPELINE                            │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  git push ──> GitHub Actions ──> ACR ──> Argo CD ──> AKS ──> 🌐 │
-│                                                                   │
-│  [Code]      [Build/Test]     [Store]   [Deploy]   [Run]   [Live]│
-│                                                                   │
-└──────────────────────────────────────────────────────────────────┘
+# Or via kubectl
+kubectl get application test-app -n argocd
 ```
 
 ---
 
-## 📊 Quick Reference: Commands Cheat Sheet
+## Step 6: Build and Push Image to ACR
 
-### Azure Commands
+This section covers the complete process of building your Docker image and pushing it to Azure Container Registry.
+
+### 6.1 Prerequisites Check
+
+Before pushing, verify you have everything ready:
+
+```bash
+# 1. Check Docker is running
+docker --version
+docker info
+
+# 2. Check Azure CLI is installed and logged in
+az --version
+az account show
+
+# 3. Verify you can access ACR
+az acr show --name acrsandboxwus2 --query loginServer --output tsv
+```
+
+### 6.2 Login to Azure (if not already)
+
 ```bash
 # Login to Azure
 az login
 
-# List resources
-az group list --output table
-az acr list --output table
-az aks list --output table
-
-# Get AKS credentials
-az aks get-credentials --resource-group RESOURCE_GROUP --name CLUSTER_NAME
+# Set subscription (if needed)
+az account set --subscription "YOUR_SUBSCRIPTION_NAME_OR_ID"
 ```
 
-### Kubernetes Commands
+### 6.3 Login to Azure Container Registry
+
+```bash
+# Login to ACR (required before pushing)
+az acr login --name acrsandboxwus2
+```
+
+**Expected output:**
+```
+Login Succeeded
+```
+
+### 6.4 Build Docker Image
+
+Navigate to the project directory (where Dockerfile is located):
+
+```bash
+# Navigate to project root
+cd /path/to/test_api_server
+
+# Build the image with version tag
+docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+```
+
+**Alternative tagging options:**
+
+```bash
+# Use timestamp for unique tags
+docker build -t acrsandboxwus2.azurecr.io/test_app:$(date +%Y%m%d-%H%M%S) .
+
+# Use git commit SHA
+docker build -t acrsandboxwus2.azurecr.io/test_app:$(git rev-parse --short HEAD) .
+
+# Build with latest tag
+docker build -t acrsandboxwus2.azurecr.io/test_app:latest .
+```
+
+**Verify the image was built:**
+```bash
+docker images | grep test_app
+```
+
+### 6.5 Push Image to ACR
+
+```bash
+# Push the image to ACR
+docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
+```
+
+**Expected output:**
+```
+The push refers to repository [acrsandboxwus2.azurecr.io/test_app]
+abc123def456: Pushed
+789ghi012jkl: Pushed
+v1.0.0: digest: sha256:... size: 1234
+```
+
+### 6.6 Verify Image in ACR
+
+```bash
+# List all tags for test_app in ACR
+az acr repository show-tags \
+  --name acrsandboxwus2 \
+  --repository test_app \
+  --orderby time_desc \
+  --output table
+```
+
+**Expected output:**
+```
+Result
+--------
+v1.0.0
+```
+
+### 6.7 Watch Automatic Deployment
+
+Once the image is pushed, Argo CD Image Updater will detect it (within 2 minutes):
+
+**Check Image Updater logs:**
+```bash
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
+```
+
+**You should see:**
+```
+level=info msg="Setting new image to acrsandboxwus2.azurecr.io/test_app:v1.0.0"
+level=info msg="Successfully updated image 'fastapi' to 'acrsandboxwus2.azurecr.io/test_app:v1.0.0'"
+```
+
+### 6.8 Verify Deployment
+
+```bash
+# Check what image is running (deployment name is RELEASE-NAME-CHART-NAME)
+kubectl get deployment test-app-fastapi-service -o jsonpath='{.spec.template.spec.containers[0].image}'
+echo
+
+# Check pod status
+kubectl get pods -l app.kubernetes.io/name=fastapi-service
+
+# Get app external IP
+kubectl get svc
+
+# Test the app
+curl http://EXTERNAL_IP/health
+```
+
+---
+
+## 🚀 Complete Image Push Workflow (Copy & Paste)
+
+Here's the complete workflow to build and push an image:
+
+```bash
+# ============================================
+# COMPLETE IMAGE PUSH WORKFLOW
+# ============================================
+
+# Step 1: Navigate to project directory
+cd /path/to/test_api_server
+
+# Step 2: Login to Azure (if not already)
+az login
+
+# Step 3: Login to ACR
+az acr login --name acrsandboxwus2
+
+# Step 4: Build the Docker image
+docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+
+# Step 5: Push to ACR
+docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
+
+# Step 6: Verify image is in ACR
+az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc
+
+# Step 7: Watch deployment (Image Updater will auto-deploy)
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
+```
+
+---
+
+## 🔄 Deploy a New Version
+
+Whenever you want to deploy changes:
+
+```bash
+# 1. Make your code changes
+# 2. Build with new tag
+docker build -t acrsandboxwus2.azurecr.io/test_app:v1.0.1 .
+
+# 3. Push to ACR
+az acr login --name acrsandboxwus2
+docker push acrsandboxwus2.azurecr.io/test_app:v1.0.1
+
+# 4. Image Updater automatically detects and deploys (within 2 minutes)
+
+# 5. Monitor deployment
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
+```
+
+---
+
+## 📦 Update Strategy Options
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `latest` | Newest image by build date | Dev/Staging |
+| `semver` | Semantic versioning (v1.2.3) | Production |
+| `digest` | Track SHA digest changes | Mutable tags |
+| `name` | Alphabetical sorting | Custom naming |
+
+**Example: Use semver for production:**
+```yaml
+annotations:
+  argocd-image-updater.argoproj.io/fastapi.update-strategy: semver
+  argocd-image-updater.argoproj.io/fastapi.allow-tags: regexp:^v[0-9]+\.[0-9]+\.[0-9]+$
+```
+
+---
+
+## 📊 Quick Reference Commands
+
+### Build & Push
+```bash
+# Build image
+docker build -t acrsandboxwus2.azurecr.io/test_app:TAG .
+
+# Login to ACR
+az acr login --name acrsandboxwus2
+
+# Push image
+docker push acrsandboxwus2.azurecr.io/test_app:TAG
+
+# List images in ACR
+az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc
+```
+
+### Azure
+```bash
+# Login
+az login
+
+# Get AKS credentials
+az aks get-credentials --resource-group rg-sandbox-horizon --name aks-sandbox-wus2
+
+# Attach ACR to AKS
+az aks update --resource-group rg-sandbox-horizon --name aks-sandbox-wus2 --attach-acr acrsandboxwus2
+```
+
+### Kubernetes
 ```bash
 # View all resources
 kubectl get all
@@ -763,129 +803,121 @@ kubectl get all
 # View pods
 kubectl get pods
 
-# View services and get external IP
+# View services
 kubectl get svc
 
 # View logs
 kubectl logs -l app.kubernetes.io/name=fastapi-service
 
-# Describe pod (for debugging)
+# Describe pod
 kubectl describe pod POD_NAME
 ```
 
-### Argo CD Commands
+### Argo CD
 ```bash
 # List apps
 argocd app list
 
 # Get app details
-argocd app get fastapi-service
+argocd app get test-app
 
-# Sync app manually
-argocd app sync fastapi-service
+# Sync manually
+argocd app sync test-app
 
-# View app history
-argocd app history fastapi-service
+# View history
+argocd app history test-app
 ```
 
-### Helm Commands
+### Image Updater
 ```bash
-# List releases
-helm list
+# View logs
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
 
-# View release status
-helm status fastapi-release
+# Force check for updates (restart the controller)
+kubectl rollout restart deployment argocd-image-updater-controller -n argocd
 
-# Upgrade release
-helm upgrade fastapi-release ./helm/fastapi-service
+# View config
+kubectl get configmap argocd-image-updater-config -n argocd -o yaml
 
-# Rollback to previous version
-helm rollback fastapi-release 1
+# View registries config specifically
+kubectl get configmap argocd-image-updater-config -n argocd -o jsonpath='{.data.registries\.conf}'
 ```
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Problem: GitHub Actions fails to push to ACR
+### Image Updater not detecting new images
 
-**Solution:** Check your secrets are correct:
 ```bash
-# Verify ACR credentials work locally
-docker login YOUR_ACR_LOGIN_SERVER
-# Enter the username and password from secrets
+# Check logs
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater
+
+# Common issues:
+# - "unauthorized" = ACR credentials incorrect
+# - "no images found" = image-list annotation wrong
 ```
 
-### Problem: Argo CD shows "Unknown" health status
+### Pods in "ImagePullBackOff" state
 
-**Solution:** Wait a few minutes, or sync manually:
-```bash
-argocd app sync fastapi-service
-```
-
-### Problem: App pods are in "ImagePullBackOff" state
-
-**Solution:** AKS might not have permission to pull from ACR:
 ```bash
 # Reattach ACR to AKS
 az aks update \
-  --resource-group $RESOURCE_GROUP \
-  --name $AKS_CLUSTER_NAME \
-  --attach-acr $ACR_NAME
+  --resource-group rg-sandbox-horizon \
+  --name aks-sandbox-wus2 \
+  --attach-acr acrsandboxwus2
 ```
 
-### Problem: Can't access Argo CD UI
+### Can't access Argo CD UI
 
-**Solution:** Ensure LoadBalancer has an IP:
 ```bash
+# Check service
 kubectl get svc argocd-server -n argocd
-# If EXTERNAL-IP is <pending>, wait or use port-forward:
+
+# Use port-forward if no external IP
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-### Problem: Changes not deploying automatically
+### Verify ACR connection from cluster
 
-**Solution:** Check if Argo CD sync is enabled:
 ```bash
-argocd app get fastapi-service
-# Look for "Sync Policy: Automated"
-
-# If not automated, enable it:
-argocd app set fastapi-service --sync-policy automated
+kubectl run --rm -it test-acr --image=mcr.microsoft.com/azure-cli --restart=Never -- \
+  az acr repository list --name acrsandboxwus2 --output table
 ```
 
----
-
-## 🧹 Cleanup (Delete All Resources)
-
-When you're done, delete everything to avoid charges:
+### Force deployment update
 
 ```bash
-# Delete the entire resource group (this deletes everything inside it)
-az group delete --name $RESOURCE_GROUP --yes --no-wait
+# Restart Image Updater
+kubectl rollout restart deployment argocd-image-updater-controller -n argocd
 
-# Delete the service principal
-az ad sp delete --id $(az ad sp list --display-name "github-actions-acr-sp" --query [0].appId -o tsv)
+# Or sync Argo CD manually
+argocd app sync test-app
 ```
 
 ---
 
 ## 📚 Additional Resources
 
-- [Azure Kubernetes Service Documentation](https://docs.microsoft.com/azure/aks/)
 - [Argo CD Documentation](https://argo-cd.readthedocs.io/)
-- [Helm Documentation](https://helm.sh/docs/)
-- [GitHub Actions Documentation](https://docs.github.com/actions)
+- [Argo CD Image Updater](https://argocd-image-updater.readthedocs.io/)
+- [Azure Container Registry](https://docs.microsoft.com/azure/container-registry/)
+- [Azure Kubernetes Service](https://docs.microsoft.com/azure/aks/)
 
 ---
 
-## 💡 Next Steps
+## 🎉 Summary
 
-Once your basic pipeline is working, consider:
+Your deployment workflow is now:
 
-1. **Add staging environment**: Deploy to staging first, then production
-2. **Add Slack/Teams notifications**: Get notified on deployments
-3. **Add monitoring**: Use Azure Monitor or Prometheus/Grafana
-4. **Add secrets management**: Use Azure Key Vault
-5. **Add HTTPS/TLS**: Configure ingress with Let's Encrypt certificates
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   docker build → docker push → Image Updater → Argo CD → AKS   │
+│                                                                 │
+│   [Build]        [Store]        [Detect]       [Deploy]  [Run] │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
+No CI/CD pipeline needed - just build, push, and watch it deploy automatically!
