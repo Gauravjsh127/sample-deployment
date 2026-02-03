@@ -30,18 +30,79 @@ If Argo CD and Image Updater are already configured, use this to deploy:
 # 1. Login to ACR
 az acr login --name acrsandboxwus2
 
-# 2. Build image (from project directory)
+# 2. Get the next version number automatically
+# This fetches the latest version from ACR and increments the patch number
+LATEST_VERSION=$(az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc --output tsv 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+if [ -z "$LATEST_VERSION" ]; then
+  NEW_VERSION="v1.0.0"
+else
+  # Parse version and increment patch number
+  MAJOR=$(echo $LATEST_VERSION | sed 's/v//' | cut -d. -f1)
+  MINOR=$(echo $LATEST_VERSION | sed 's/v//' | cut -d. -f2)
+  PATCH=$(echo $LATEST_VERSION | sed 's/v//' | cut -d. -f3)
+  NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+fi
+echo "Building version: $NEW_VERSION (previous: ${LATEST_VERSION:-none})"
+
+# 3. Build image (from project directory)
 # ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
-docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION .
 
-# 3. Push to ACR
-docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
+# 4. Push to ACR
+docker push acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION
 
-# 4. Done! Image Updater auto-deploys within 2 minutes
+# 5. Verify the push
+echo "✅ Pushed: acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION"
+az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc --output table | head -5
+
+# 6. Done! Image Updater auto-deploys within 2 minutes
 # Monitor with: kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
 ```
 
+### One-Liner Version (Copy & Paste Ready)
+
+```bash
+# Complete one-liner: Login, auto-version, build, push
+az acr login --name acrsandboxwus2 && \
+LATEST=$(az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc -o tsv 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1) && \
+NEW_VERSION=${LATEST:+v$(echo $LATEST | sed 's/v//' | awk -F. '{print $1"."$2"."$3+1}')} && \
+NEW_VERSION=${NEW_VERSION:-v1.0.0} && \
+echo "🚀 Building $NEW_VERSION" && \
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION . && \
+docker push acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION && \
+echo "✅ Deployed! ArgoCD will sync within 2 minutes"
+```
+
 > **First time setup?** Follow the complete guide below starting from [Step 1](#step-1-install-required-tools).
+> 
+> **Note:** ArgoCD Image Updater uses `semver` strategy, so it always deploys the **highest** semantic version (e.g., v1.0.5 > v1.0.4). Each push must use a higher version number.
+
+---
+
+## 🛠️ Using the Deploy Script (Recommended)
+
+For the easiest deployment experience, use the included deploy script:
+
+```bash
+# Navigate to project directory
+cd /path/to/test_api_server
+
+# Deploy with auto-incrementing patch version (v1.0.0 → v1.0.1 → v1.0.2)
+./scripts/deploy.sh
+
+# Or specify version increment type:
+./scripts/deploy.sh --patch   # v1.0.5 → v1.0.6 (default)
+./scripts/deploy.sh --minor   # v1.0.5 → v1.1.0
+./scripts/deploy.sh --major   # v1.0.5 → v2.0.0
+```
+
+The script automatically:
+1. ✅ Logs into ACR
+2. ✅ Fetches the latest version from ACR
+3. ✅ Increments the version number
+4. ✅ Builds with correct platform (linux/amd64)
+5. ✅ Pushes to ACR
+6. ✅ Shows you how to monitor the deployment
 
 ---
 
@@ -92,16 +153,17 @@ docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
 ## 📋 Table of Contents
 
 1. [Quick Start: Push an Image](#-quick-start-push-an-image-if-already-set-up)
-2. [Prerequisites](#prerequisites)
-3. [Step 1: Install Required Tools](#step-1-install-required-tools)
-4. [Step 2: Connect to Azure Resources](#step-2-connect-to-azure-resources)
-5. [Step 3: Install Argo CD on AKS](#step-3-install-argo-cd-on-aks)
-6. [Step 4: Install Argo CD Image Updater](#step-4-install-argo-cd-image-updater)
-7. [Step 5: Configure Argo CD Application](#step-5-configure-argo-cd-application)
-8. [Step 6: Build and Push Image to ACR](#step-6-build-and-push-image-to-acr)
-9. [Complete Image Push Workflow](#-complete-image-push-workflow-copy--paste)
-10. [Deploy a New Version](#-deploy-a-new-version)
-11. [Quick Reference Commands](#-quick-reference-commands)
+2. [Using the Deploy Script](#️-using-the-deploy-script-recommended)
+3. [Prerequisites](#prerequisites)
+4. [Step 1: Install Required Tools](#step-1-install-required-tools)
+5. [Step 2: Connect to Azure Resources](#step-2-connect-to-azure-resources)
+6. [Step 3: Install Argo CD on AKS](#step-3-install-argo-cd-on-aks)
+7. [Step 4: Install Argo CD Image Updater](#step-4-install-argo-cd-image-updater)
+8. [Step 5: Configure Argo CD Application](#step-5-configure-argo-cd-application)
+9. [Step 6: Build and Push Image to ACR](#step-6-build-and-push-image-to-acr)
+10. [Complete Image Push Workflow](#-complete-image-push-workflow-copy--paste)
+11. [Deploy a New Version](#-deploy-a-new-version)
+12. [Quick Reference Commands](#-quick-reference-commands)
 
 ---
 
@@ -741,11 +803,11 @@ az aks command invoke \
 
 ## 🚀 Complete Image Push Workflow (Copy & Paste)
 
-Here's the complete workflow to build and push an image:
+Here's the complete workflow to build and push an image with **automatic versioning**:
 
 ```bash
 # ============================================
-# COMPLETE IMAGE PUSH WORKFLOW
+# COMPLETE IMAGE PUSH WORKFLOW (AUTO-VERSION)
 # ============================================
 
 # Step 1: Navigate to project directory
@@ -757,19 +819,43 @@ az login
 # Step 3: Login to ACR
 az acr login --name acrsandboxwus2
 
-# Step 4: Build the Docker image
+# Step 4: Get next version automatically
+LATEST_VERSION=$(az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc --output tsv 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+if [ -z "$LATEST_VERSION" ]; then
+  NEW_VERSION="v1.0.0"
+else
+  MAJOR=$(echo $LATEST_VERSION | sed 's/v//' | cut -d. -f1)
+  MINOR=$(echo $LATEST_VERSION | sed 's/v//' | cut -d. -f2)
+  PATCH=$(echo $LATEST_VERSION | sed 's/v//' | cut -d. -f3)
+  NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+fi
+echo "📦 Building: $NEW_VERSION (previous: ${LATEST_VERSION:-none})"
+
+# Step 5: Build the Docker image
 # ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
-docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.0 .
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION .
 
-# Step 5: Push to ACR
-docker push acrsandboxwus2.azurecr.io/test_app:v1.0.0
+# Step 6: Push to ACR
+docker push acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION
 
-# Step 6: Verify image is in ACR
-az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc
+# Step 7: Verify image is in ACR
+echo "✅ Successfully pushed: $NEW_VERSION"
+az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc --output table | head -5
 
-# Step 7: Watch deployment (Image Updater will auto-deploy)
+# Step 8: Watch deployment (Image Updater will auto-deploy within 2 min)
+echo "⏳ Waiting for ArgoCD Image Updater to detect and deploy..."
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f
 ```
+
+### Version Progression Example
+
+Each time you run the workflow, versions increment automatically:
+- First push: `v1.0.0`
+- Second push: `v1.0.1`  
+- Third push: `v1.0.2`
+- ... and so on
+
+ArgoCD Image Updater always selects the **highest** semantic version.
 
 ---
 
@@ -780,23 +866,46 @@ Whenever you want to deploy changes:
 ```bash
 # 1. Make your code changes
 
-# 2. Build with new tag
-# ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
-docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:v1.0.1 .
-
-# 3. Push to ACR
+# 2. Login to ACR
 az acr login --name acrsandboxwus2
-docker push acrsandboxwus2.azurecr.io/test_app:v1.0.1
 
-# 4. Image Updater automatically detects and deploys (within 2 minutes)
+# 3. Auto-generate next version
+LATEST=$(az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc -o tsv 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+if [ -z "$LATEST" ]; then
+  NEW_VERSION="v1.0.0"
+else
+  NEW_VERSION="v$(echo $LATEST | sed 's/v//' | awk -F. '{print $1"."$2"."$3+1}')"
+fi
+echo "📦 Current: ${LATEST:-none} → New: $NEW_VERSION"
 
-# 5. Monitor deployment
+# 4. Build with auto-generated tag
+# ⚠️ Apple Silicon (M1/M2/M3) users MUST use --platform linux/amd64
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION .
 
+# 5. Push to ACR
+docker push acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION
+
+# 6. Image Updater automatically detects and deploys (within 2 minutes)
+echo "✅ Pushed $NEW_VERSION - ArgoCD will sync automatically"
+
+# 7. Monitor deployment
 az aks command invoke \
   --resource-group rg-sandbox-horizon \
   --name aks-sandbox-wus2 \
-  --command "kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f"
+  --command "kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater --tail=20"
+```
 
+### Quick Deploy One-Liner
+
+After making code changes, just run:
+
+```bash
+az acr login --name acrsandboxwus2 && \
+NEW_VERSION="v$(az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc -o tsv 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/v//' | awk -F. '{print $1"."$2"."$3+1}')" && \
+NEW_VERSION=${NEW_VERSION:-v1.0.0} && \
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION . && \
+docker push acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION && \
+echo "✅ Deployed $NEW_VERSION"
 ```
 
 ---
@@ -821,16 +930,20 @@ annotations:
 
 ## 📊 Quick Reference Commands
 
-### Build & Push
+### Build & Push (Auto-Version)
 ```bash
-# Build image (use --platform linux/amd64 on Apple Silicon Macs)
-docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:TAG .
-
 # Login to ACR
 az acr login --name acrsandboxwus2
 
+# Get next version
+NEW_VERSION="v$(az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc -o tsv 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/v//' | awk -F. '{print $1"."$2"."$3+1}')"
+NEW_VERSION=${NEW_VERSION:-v1.0.0}
+
+# Build image (use --platform linux/amd64 on Apple Silicon Macs)
+docker build --platform linux/amd64 -t acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION .
+
 # Push image
-docker push acrsandboxwus2.azurecr.io/test_app:TAG
+docker push acrsandboxwus2.azurecr.io/test_app:$NEW_VERSION
 
 # List images in ACR
 az acr repository show-tags --name acrsandboxwus2 --repository test_app --orderby time_desc
